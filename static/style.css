@@ -1,0 +1,636 @@
+:root {
+  --bg: #f4f5f7;
+  --card: #ffffff;
+  --ink: #15181e;
+  --muted: #6c727d;
+  --line: #dadde3;
+  --accent: #2b44e6;
+  --late: #b8322a;
+  --radius: 6px;
+  --tint-pct: 9%;
+  --c-red: #d94b3d;
+  --c-orange: #e07b1f;
+  --c-yellow: #c9a20c;
+  --c-green: #2e9d57;
+  --c-teal: #1b9aaa;
+  --c-blue: #2b6fe6;
+  --c-purple: #7b4fd6;
+  --c-pink: #d6489a;
+  --c-gray: #7b8290;
+  color-scheme: light dark;
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --card: #1c1f25;
+    --ink: #eceef2;
+    --muted: #8d94a0;
+    --line: #2e333c;
+    --accent: #7b8dff;
+    --late: #ff8479;
+    --tint-pct: 16%;
+  }
+}
+
+* { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+html, body { margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.4;
+  padding: 24px clamp(16px, 4vw, 48px) 64px;
+}
+
+button, input { font: inherit; color: inherit; }
+
+button {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* ---------- En-tête ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 28px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.plus {
+  position: relative;
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.plus::before,
+.plus::after {
+  content: "";
+  position: absolute;
+  background: var(--ink);
+}
+.plus::before { left: 0; right: 0; top: 6px; height: 2px; }
+.plus::after  { top: 0; bottom: 0; left: 6px; width: 2px; }
+
+.add-link,
+.add-task-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 4px 0;
+}
+.add-link:hover,
+.add-task-link:hover { color: var(--ink); }
+
+/* ---------- Onglets ---------- */
+
+.tabs { display: flex; gap: 4px; }
+
+.tab {
+  padding: 6px 14px;
+  font-weight: 600;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+.tab:hover { color: var(--ink); }
+.tab[aria-selected="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+/* ---------- Dashboard ---------- */
+
+.dashboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+  gap: 20px;
+  align-items: stretch; /* mêmes hauteurs sur une ligne, sauf carte fermée */
+}
+
+.dash-card.closed { align-self: start; }
+
+.dash-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px 10px;
+}
+
+.dash-card.late {
+  border-color: var(--late);
+  background: color-mix(in srgb, var(--late) 7%, var(--card));
+}
+.dash-card.late .dash-head h2 { color: var(--late); }
+.dash-card.late .count { background: var(--late); color: #fff; }
+
+.dash-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dash-head h2 { margin: 0; font-size: 17px; font-weight: 700; }
+.dash-head .count { margin-left: 0; }
+.dash-head .hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dash-project {
+  margin: 12px 0 2px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.dash-empty { margin: 8px 0 6px; color: var(--muted); }
+
+/* ---------- Projets ---------- */
+
+.projects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: stretch; /* les projets d'une même ligne finissent à la même hauteur */
+  overflow-x: clip; /* la marge d'un projet « sur sa ligne » ne doit pas créer de défilement */
+}
+
+.empty {
+  margin: 48px 0;
+  color: var(--muted);
+}
+
+.project {
+  --w: 380px;
+  position: relative;
+  flex: 0 0 auto;
+  width: min(100%, var(--w));
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 16px 10px 8px;
+}
+
+/* Projet sur sa propre ligne : sa marge droite remplit la ligne,
+   le projet suivant passe donc forcément en dessous. */
+.project.own-row { margin-right: 100%; }
+
+/* Un projet fermé garde sa hauteur réduite. */
+.project.collapsed { align-self: flex-start; }
+
+.project.dragging,
+.task.dragging {
+  opacity: 0.45;
+}
+.project.dragging {
+  border-style: dashed;
+  border-color: var(--accent);
+}
+
+.project-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+}
+
+/* Poignée de déplacement : invisible tant qu'on ne survole pas la ligne. */
+.grip {
+  width: 14px;
+  flex: none;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  cursor: grab;
+  user-select: none;
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0;
+}
+.grip:active { cursor: grabbing; }
+.project-head:hover .grip,
+.task:hover .grip { opacity: 1; }
+
+.chev-btn {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  border-radius: 4px;
+}
+.chev-btn:hover { background: var(--bg); color: var(--ink); }
+
+.chev {
+  display: inline-block;
+  font-size: 18px;
+  line-height: 1;
+}
+.chev-btn[aria-expanded="true"] .chev,
+.done-group[open] > summary .chev { transform: rotate(90deg); }
+
+.project-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0 0 0 4px;
+  font-size: 18px;
+  font-weight: 700;
+  cursor: text;
+  overflow-wrap: anywhere;
+}
+
+.count {
+  margin-left: 6px;
+  min-width: 20px;
+  padding: 0 6px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--bg);
+  border-radius: 10px;
+}
+
+.head-spacer { flex: 1; }
+
+.menu-wrap { position: relative; }
+
+.menu-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0;
+}
+.project:hover .menu-btn,
+.menu-btn:focus-visible,
+.menu-btn[aria-expanded="true"] { opacity: 1; }
+.menu-btn:hover { background: var(--bg); }
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: 32px;
+  z-index: 10;
+  min-width: 170px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+}
+.menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 4px;
+}
+.menu button:hover { background: var(--bg); }
+.menu .danger { color: var(--late); }
+
+/* Poignée de redimensionnement sur le bord droit. */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -5px;
+  width: 10px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  opacity: 0;
+}
+.project:hover .resize-handle::after,
+.resize-handle:hover::after { opacity: 0.5; }
+.resize-handle:active::after { opacity: 1; }
+
+/* ---------- Tâches ---------- */
+
+/* Les lignes d'une liste partagent les mêmes colonnes (sous-grille) :
+   poignée | case | titre | « - » | date | espace libre | suppression.
+   La colonne du titre prend la largeur du titre le plus long, donc les dates s'alignent. */
+.tasks {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 14px auto auto auto auto minmax(0, 1fr) auto;
+  column-gap: 8px;
+}
+
+.task {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.task input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0 2px;
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.task-title {
+  font-weight: 600;
+  cursor: text;
+  overflow-wrap: anywhere;
+}
+
+.task-sep { color: var(--muted); }
+
+.task-date {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.task-date.late { color: var(--late); }
+
+.task-date.empty-date {
+  font-weight: 400;
+  color: var(--muted);
+  opacity: 0;
+  font-size: 13px;
+}
+.task:hover .task-date.empty-date,
+.task-date.empty-date:focus-visible { opacity: 1; }
+
+.task.is-done .task-title,
+.task.is-done .task-date {
+  color: var(--muted);
+  text-decoration: line-through;
+  font-weight: 400;
+}
+
+.task-del {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  color: var(--muted);
+  border-radius: var(--radius);
+  opacity: 0;
+}
+.task:hover .task-del,
+.task-del:focus-visible { opacity: 1; }
+.task-del:hover { color: var(--late); background: var(--bg); }
+
+/* Tâches terminées : sous-ensemble repliable. */
+.done-group { margin: 4px 0 0 14px; }
+
+.done-group > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 4px 0;
+  user-select: none;
+}
+.done-group > summary::-webkit-details-marker { display: none; }
+.done-group > summary:hover { color: var(--ink); }
+.done-group > summary .chev { font-size: 16px; width: 22px; text-align: center; }
+.done-group .tasks { margin-top: 0; }
+
+/* ---------- Champs d'édition ---------- */
+
+input.inline,
+.add-task input[type="text"],
+.add-task input[type="date"],
+.add-task input[type="time"],
+.new-project input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 8px;
+  min-width: 0;
+}
+input.inline:focus,
+.add-task input:focus,
+.new-project input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+input.inline.title-edit { flex: 1; font-weight: 600; }
+input.inline.name-edit { flex: 1; font-size: 18px; font-weight: 700; padding: 1px 8px; }
+
+.date-edit,
+.date-slot {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.date-edit .clear {
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: underline;
+}
+.date-edit .clear:hover { color: var(--late); }
+
+/* ---------- Ajout d'une tâche ---------- */
+
+.add-task-wrap { padding: 4px 0 4px 28px; }
+
+.add-task-link .plus { margin: 0 2px; }
+
+.add-task {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.add-task input[type="text"] { flex: 1 1 160px; }
+
+.btn {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 4px;
+  padding: 3px 12px;
+  font-weight: 600;
+}
+.btn.secondary {
+  background: none;
+  color: var(--muted);
+  font-weight: 400;
+  padding: 3px 6px;
+}
+.btn.secondary:hover { color: var(--ink); }
+
+.new-project {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ---------- Message d'erreur ---------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--bg);
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  max-width: min(90vw, 480px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .project, .task { transition: opacity 0.15s; }
+  .chev { transition: transform 0.12s; }
+}
+
+/* ---------- Placement des éléments d'une tâche dans la grille ---------- */
+
+.task > .grip { grid-column: 1; }
+.task > input[type="checkbox"] { grid-column: 2; }
+.task > .task-title { grid-column: 3; }
+.task > .task-sep { grid-column: 4; }
+.task > .task-date { grid-column: 5; justify-self: start; text-align: left; }
+.task > .task-del { grid-column: 7; justify-self: end; }
+
+/* « ajouter une date » : proposé dans la colonne des dates, sur la largeur disponible. */
+.task > .task-date.empty-date { grid-column: 5 / 7; }
+
+/* Champs d'édition : ils s'étalent sur plusieurs colonnes sans élargir les autres. */
+.task > .inline.title-edit { grid-column: 3 / 6; width: 100%; min-width: 0; }
+.task > .date-edit { grid-column: 5 / 7; justify-self: start; min-width: 0; }
+
+/* ---------- Dashboard : cartes et projets repliables ---------- */
+
+.dash-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  border-radius: 4px;
+}
+.dash-toggle .chev {
+  width: 18px;
+  text-align: center;
+  color: var(--muted);
+}
+.dash-toggle[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.dash-toggle:hover .chev { color: var(--ink); }
+
+.dash-head h2 { font-size: 17px; }
+.dash-card.closed .dash-head { min-height: 26px; }
+
+.dash-project { margin: 12px 0 2px; }
+.dash-project .dash-toggle { font-size: 13px; font-weight: 700; color: var(--muted); }
+.dash-project .dash-toggle:hover { color: var(--ink); }
+.group-count {
+  margin-left: 6px;
+  font-weight: 400;
+  font-size: 12px;
+}
+
+/* ---------- Couleur d'un projet ---------- */
+
+[data-color="red"] { --tint: var(--c-red); }
+[data-color="orange"] { --tint: var(--c-orange); }
+[data-color="yellow"] { --tint: var(--c-yellow); }
+[data-color="green"] { --tint: var(--c-green); }
+[data-color="teal"] { --tint: var(--c-teal); }
+[data-color="blue"] { --tint: var(--c-blue); }
+[data-color="purple"] { --tint: var(--c-purple); }
+[data-color="pink"] { --tint: var(--c-pink); }
+[data-color="gray"] { --tint: var(--c-gray); }
+
+.project[data-color] {
+  background: color-mix(in srgb, var(--tint) var(--tint-pct), var(--card));
+  border-color: color-mix(in srgb, var(--tint) 55%, var(--line));
+}
+
+.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin: 0 2px;
+  border-radius: 50%;
+  background: var(--tint);
+  flex: none;
+}
+
+.menu .swatches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 8px;
+  max-width: 200px;
+}
+.menu .menu-label {
+  flex: 0 0 100%;
+  font-size: 12px;
+  color: var(--muted);
+}
+.menu button.swatch,
+.menu button.swatch:hover {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--sw);
+  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+}
+.menu button.swatch.none,
+.menu button.swatch.none:hover {
+  background: linear-gradient(135deg, transparent 45%, var(--muted) 45%, var(--muted) 55%, transparent 55%), var(--card);
+}
+.menu button.swatch.selected {
+  box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--ink);
+}

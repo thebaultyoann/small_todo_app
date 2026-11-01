@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Todolist</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <nav class="tabs" role="tablist" aria-label="Vues">
+      <button class="tab" role="tab" data-tab="tasks" aria-selected="true">Tâches</button>
+      <button class="tab" role="tab" data-tab="dashboard" aria-selected="false">Dashboard</button>
+    </nav>
+    <div id="new-project-slot"></div>
+  </header>
+
+  <main>
+    <div id="projects" class="projects" role="tabpanel"></div>
+    <p id="empty" class="empty" hidden>Aucun projet pour l’instant. Cliquez sur « nouveau projet » pour commencer.</p>
+    <div id="dashboard" class="dashboard" role="tabpanel" hidden></div>
+  </main>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>
