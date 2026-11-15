@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,32 +24,43 @@ import (
 // Dossier contenant static/ et todolist.json (modifiable avec l'option -dir).
 const defaultDir = `C:\Logiciels\Todo`
 
-// Couleurs de projet autorisées (les teintes sont définies dans le CSS).
-var validColors = map[string]bool{"": true, "red": true, "orange": true, "yellow": true, "green": true, "teal": true, "blue": true, "purple": true, "pink": true, "gray": true}
-
 const (
-	defaultWidth = 380
-	minWidth     = 220
-	maxWidth     = 4000
-	defaultTime  = "18:00" // heure appliquée quand une date est donnée sans heure
+	defaultTime    = "18:00" // heure appliquée quand une date est donnée sans heure
+	maxText        = 50000   // taille max d'une description / d'un bloc
+	maxBlocks      = 50      // nombre max de blocs supplémentaires par tâche
+	maxCategoryLen = 60      // longueur max d'un nom de catégorie (en caractères)
 )
+
+// Couleurs prédéfinies (les teintes sont dans le CSS) ; une couleur libre
+// au format #rrggbb est aussi acceptée.
+var presetColors = map[string]bool{
+	"red": true, "orange": true, "yellow": true, "green": true, "teal": true,
+	"blue": true, "purple": true, "pink": true, "gray": true,
+}
+
+var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+func validColor(c string) bool {
+	return c == "" || presetColors[c] || hexColor.MatchString(c)
+}
 
 // ---------- Modèles ----------
 
 type Task struct {
-	ID    int64   `json:"id"`
-	Title string  `json:"title"`
-	DueAt *string `json:"due_at"` // "2006-01-02T15:04" (heure locale) ou null
-	Done  bool    `json:"done"`
+	ID          int64    `json:"id"`
+	Title       string   `json:"title"`
+	DueAt       *string  `json:"due_at"` // "2006-01-02T15:04" (heure locale) ou null
+	Done        bool     `json:"done"`
+	Description string   `json:"description"` // description principale
+	Blocks      []string `json:"blocks"`      // blocs de description supplémentaires
 }
 
 type Project struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
-	Width     int    `json:"width"`     // largeur en pixels
+	Category  string `json:"category"`  // catégorie ("" = aucune)
+	Color     string `json:"color"`     // clé de la palette, ou #rrggbb ("" = aucune)
 	Collapsed bool   `json:"collapsed"` // projet fermé
-	Color     string `json:"color"`     // clé de la palette ("" = aucune)
-	OwnRow    bool   `json:"own_row"`   // projet seul sur sa ligne (les suivants passent dessous)
 	Tasks     []Task `json:"tasks"`     // l'ordre du tableau = l'ordre d'affichage
 }
 
@@ -89,7 +101,9 @@ func openStore(path string) (*Store, error) {
 		}
 	}
 
-	// Normalisation et garde-fou sur le compteur d'identifiants.
+	// Rétrocompatibilité : les fichiers créés par les versions précédentes n'ont
+	// ni catégorie, ni description, ni blocs. Les champs absents prennent leur
+	// valeur par défaut, et les anciens champs (largeur, ligne propre) sont ignorés.
 	if s.data.Projects == nil {
 		s.data.Projects = []*Project{}
 	}
@@ -98,12 +112,12 @@ func openStore(path string) (*Store, error) {
 		if p.Tasks == nil {
 			p.Tasks = []Task{}
 		}
-		if p.Width == 0 {
-			p.Width = defaultWidth
-		}
 		maxID = max(maxID, p.ID)
-		for _, t := range p.Tasks {
-			maxID = max(maxID, t.ID)
+		for i := range p.Tasks {
+			if p.Tasks[i].Blocks == nil {
+				p.Tasks[i].Blocks = []string{}
+			}
+			maxID = max(maxID, p.Tasks[i].ID)
 		}
 	}
 	if s.data.NextID <= maxID {
@@ -164,10 +178,10 @@ func (s *Store) List() []Project {
 	return out
 }
 
-func (s *Store) CreateProject(name string) (Project, error) {
+func (s *Store) CreateProject(name, category string) (Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p := &Project{ID: s.newID(), Name: name, Width: defaultWidth, Tasks: []Task{}}
+	p := &Project{ID: s.newID(), Name: name, Category: category, Tasks: []Task{}}
 	s.data.Projects = append(s.data.Projects, p)
 	return *p, s.save()
 }
@@ -181,8 +195,7 @@ func (s *Store) UpdateProject(id int64, fields map[string]json.RawMessage) error
 	}
 
 	// On valide tout avant d'appliquer, pour ne jamais modifier à moitié.
-	name, width, collapsed, ownRow := p.Name, p.Width, p.Collapsed, p.OwnRow
-	color := p.Color
+	name, category, color, collapsed := p.Name, p.Category, p.Color, p.Collapsed
 	changed := 0
 
 	if raw, ok := fields["name"]; ok {
@@ -193,12 +206,22 @@ func (s *Store) UpdateProject(id int64, fields map[string]json.RawMessage) error
 		name = strings.TrimSpace(v)
 		changed++
 	}
-	if raw, ok := fields["width"]; ok {
-		var v float64
+	if raw, ok := fields["category"]; ok {
+		var v string
 		if err := json.Unmarshal(raw, &v); err != nil {
-			return errBadRequest("largeur invalide")
+			return errBadRequest("catégorie invalide")
 		}
-		width = int(min(max(v, minWidth), maxWidth))
+		c, err := cleanCategory(v)
+		if err != nil {
+			return err
+		}
+		category = c
+		changed++
+	}
+	if raw, ok := fields["color"]; ok {
+		if err := json.Unmarshal(raw, &color); err != nil || !validColor(color) {
+			return errBadRequest("couleur invalide")
+		}
 		changed++
 	}
 	if raw, ok := fields["collapsed"]; ok {
@@ -207,24 +230,11 @@ func (s *Store) UpdateProject(id int64, fields map[string]json.RawMessage) error
 		}
 		changed++
 	}
-	if raw, ok := fields["own_row"]; ok {
-		if err := json.Unmarshal(raw, &ownRow); err != nil {
-			return errBadRequest("disposition invalide")
-		}
-		changed++
-	}
-	if raw, ok := fields["color"]; ok {
-		if err := json.Unmarshal(raw, &color); err != nil || !validColors[color] {
-			return errBadRequest("couleur invalide")
-		}
-		changed++
-	}
 	if changed == 0 {
 		return errBadRequest("rien à modifier")
 	}
 
-	p.Name, p.Width, p.Collapsed, p.OwnRow = name, width, collapsed, ownRow
-	p.Color = color
+	p.Name, p.Category, p.Color, p.Collapsed = name, category, color, collapsed
 	return s.save()
 }
 
@@ -240,26 +250,32 @@ func (s *Store) DeleteProject(id int64) error {
 	return errNotFound
 }
 
-// ReorderProjects place les projets dans l'ordre donné ; les identifiants
-// inconnus sont ignorés et les projets non cités restent à la suite.
+// ReorderProjects applique l'ordre donné. La liste peut être partielle (vue
+// d'une seule catégorie) : les projets cités se répartissent dans les
+// emplacements qu'ils occupaient déjà, les autres ne bougent pas.
 func (s *Store) ReorderProjects(ids []int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rest := make(map[int64]*Project, len(s.data.Projects))
+	byID := make(map[int64]*Project, len(s.data.Projects))
 	for _, p := range s.data.Projects {
-		rest[p.ID] = p
+		byID[p.ID] = p
 	}
-	out := make([]*Project, 0, len(s.data.Projects))
+	seen := make(map[int64]bool, len(ids))
+	order := make([]*Project, 0, len(ids))
 	for _, id := range ids {
-		if p, ok := rest[id]; ok {
-			out = append(out, p)
-			delete(rest, id)
+		if p, ok := byID[id]; ok && !seen[id] {
+			seen[id] = true
+			order = append(order, p)
 		}
 	}
-	for _, p := range s.data.Projects {
-		if _, ok := rest[p.ID]; ok {
-			out = append(out, p)
+
+	out := append([]*Project{}, s.data.Projects...)
+	k := 0
+	for i, p := range s.data.Projects {
+		if seen[p.ID] {
+			out[i] = order[k]
+			k++
 		}
 	}
 	s.data.Projects = out
@@ -273,7 +289,7 @@ func (s *Store) CreateTask(projectID int64, title string, due *string) (Task, er
 	if p == nil {
 		return Task{}, errNotFound
 	}
-	t := Task{ID: s.newID(), Title: title, DueAt: due}
+	t := Task{ID: s.newID(), Title: title, DueAt: due, Blocks: []string{}}
 	p.Tasks = append(p.Tasks, t)
 	return t, s.save()
 }
@@ -317,6 +333,30 @@ func (s *Store) UpdateTask(id int64, fields map[string]json.RawMessage) error {
 		if err := json.Unmarshal(raw, &t.Done); err != nil {
 			return errBadRequest("état invalide")
 		}
+		changed++
+	}
+	if raw, ok := fields["description"]; ok {
+		var v string
+		if err := json.Unmarshal(raw, &v); err != nil || len(v) > maxText {
+			return errBadRequest("description invalide")
+		}
+		t.Description = v
+		changed++
+	}
+	if raw, ok := fields["blocks"]; ok {
+		var v []string
+		if err := json.Unmarshal(raw, &v); err != nil || len(v) > maxBlocks {
+			return errBadRequest("blocs invalides")
+		}
+		for _, b := range v {
+			if len(b) > maxText {
+				return errBadRequest("bloc trop long")
+			}
+		}
+		if v == nil {
+			v = []string{}
+		}
+		t.Blocks = v
 		changed++
 	}
 	if changed == 0 {
@@ -368,6 +408,15 @@ func (s *Store) ReorderTasks(projectID int64, ids []int64) error {
 	return s.save()
 }
 
+// cleanCategory retire les espaces superflus et vérifie la longueur.
+func cleanCategory(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if len([]rune(s)) > maxCategoryLen {
+		return "", errBadRequest("nom de catégorie trop long")
+	}
+	return s, nil
+}
+
 // normalizeDue accepte "AAAA-MM-JJTHH:MM" ou "AAAA-MM-JJ" (heure fixée à 18:00).
 func normalizeDue(s string) (*string, error) {
 	s = strings.TrimSpace(s)
@@ -408,7 +457,7 @@ func writeErr(w http.ResponseWriter, err error) {
 }
 
 func readJSON(r *http.Request, dst any) error {
-	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20)
+	r.Body = http.MaxBytesReader(nil, r.Body, 4<<20)
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
 		return errBadRequest("JSON invalide")
 	}
@@ -459,7 +508,8 @@ func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name string `json:"name"`
+		Name     string `json:"name"`
+		Category string `json:"category"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, err)
@@ -470,7 +520,12 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, errBadRequest("le nom du projet est requis"))
 		return
 	}
-	p, err := a.store.CreateProject(name)
+	category, err := cleanCategory(in.Category)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	p, err := a.store.CreateProject(name, category)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -589,7 +644,7 @@ func (a *API) deleteTask(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	// 127.0.0.1 : l'application n'est accessible que depuis cette machine.
-	addr := flag.String("addr", "127.0.0.1:3333", "adresse d'écoute")
+	addr := flag.String("addr", "127.0.0.1:8080", "adresse d'écoute")
 	dir := flag.String("dir", defaultDir, "dossier contenant static/ et todolist.json")
 	flag.Parse()
 

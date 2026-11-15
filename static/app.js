@@ -4,12 +4,16 @@ const projectsEl = document.getElementById("projects");
 const emptyEl = document.getElementById("empty");
 const dashboardEl = document.getElementById("dashboard");
 const newProjectSlot = document.getElementById("new-project-slot");
+const tabsEl = document.getElementById("tabs");
 const toastEl = document.getElementById("toast");
+const dialogEl = document.getElementById("task-dialog");
+const categoriesEl = document.getElementById("categories");
+const hlToggle = document.getElementById("hl-today");
 
 const DEFAULT_TIME = "18:00";
 // Palette des projets (les teintes sont définies dans le CSS : --c-<clé>).
 const COLORS = [["red", "Rouge"], ["orange", "Orange"], ["yellow", "Jaune"], ["green", "Vert"], ["teal", "Turquoise"], ["blue", "Bleu"], ["purple", "Violet"], ["pink", "Rose"], ["gray", "Gris"]];
-const MIN_WIDTH = 220;
+const HEX = /^#[0-9a-fA-F]{6}$/;
 
 // Projet dans lequel le formulaire « nouvelle tâche » est ouvert.
 let addingTaskIn = null;
@@ -57,6 +61,14 @@ async function api(method, url, body) {
   }
 }
 
+// Préférences d'affichage conservées dans le navigateur.
+function getPref(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function setPref(key, value) {
+  try { localStorage.setItem(key, value); } catch {}
+}
+
 const pad = (n) => String(n).padStart(2, "0");
 
 function todayStr() {
@@ -92,25 +104,113 @@ function isLate(task) {
   return !task.done && !!task.due_at && task.due_at.slice(0, 10) < todayStr();
 }
 
-/* ---------- Chargement et rendu ---------- */
+function isToday(task) {
+  return !task.done && !!task.due_at && task.due_at.slice(0, 10) === todayStr();
+}
+
+// Attributs d'un élément coloré : clé de palette ou couleur libre (#rrggbb).
+function colorProps(color) {
+  if (!color) return {};
+  if (HEX.test(color)) return { "data-color": "custom", style: `--tint: ${color}` };
+  return { "data-color": color };
+}
+
+/* ---------- Option : tâches du jour en bleu ---------- */
+
+const HL_KEY = "todolist.highlightToday";
+
+function applyHighlight(on) {
+  document.body.classList.toggle("hl-today", on);
+  hlToggle.checked = on;
+}
+hlToggle.addEventListener("change", () => {
+  setPref(HL_KEY, hlToggle.checked ? "1" : "0");
+  applyHighlight(hlToggle.checked);
+});
+applyHighlight(getPref(HL_KEY) === "1");
+
+/* ---------- Chargement, onglets et rendu ---------- */
 
 let lastProjects = [];
-let currentTab = location.hash === "#dashboard" ? "dashboard" : "tasks";
+let currentTab = tabFromHash(); // "tasks", "dashboard" ou "cat:<nom>"
+
+function safeDecode(s) {
+  try { return decodeURIComponent(s); } catch { return s; }
+}
+
+function tabFromHash() {
+  const raw = location.hash.slice(1);
+  if (raw === "dashboard") return "dashboard";
+  if (raw.startsWith("cat:")) return "cat:" + safeDecode(raw.slice(4));
+  return "tasks";
+}
+
+function tabHash(key) {
+  return key.startsWith("cat:") ? "cat:" + encodeURIComponent(key.slice(4)) : key;
+}
+
+const categoryOfTab = () => (currentTab.startsWith("cat:") ? currentTab.slice(4) : "");
+
+function categoriesOf(projects) {
+  const set = new Set(projects.map((p) => p.category).filter(Boolean));
+  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
+}
 
 async function load() {
   const projects = await api("GET", "/api/projects");
   render(projects);
 }
 
+function renderTabs(categories) {
+  const tab = (key, label) =>
+    h("button", { class: "tab", role: "tab", "data-tab": key, "aria-selected": String(key === currentTab), onclick: () => setTab(key) }, label);
+
+  // Pas de null ici : replaceChildren(null) écrirait littéralement "null".
+  const items = [tab("tasks", "Tâches"), tab("dashboard", "Dashboard")];
+  if (categories.length) {
+    items.push(h("span", { class: "tab-sep", "aria-hidden": "true" }), ...categories.map((c) => tab("cat:" + c, c)));
+  }
+  tabsEl.replaceChildren(...items);
+}
+
+function applyTab() {
+  const dash = currentTab === "dashboard";
+  projectsEl.hidden = dash;
+  dashboardEl.hidden = !dash;
+  newProjectSlot.hidden = dash;
+  if (dash) emptyEl.hidden = true;
+}
+
+function setTab(key) {
+  if (key === currentTab) return;
+  currentTab = key;
+  history.replaceState(null, "", "#" + tabHash(key));
+  render(lastProjects); // affichage immédiat, puis actualisation
+  load();
+}
+
 function render(projects) {
   lastProjects = projects;
+  const categories = categoriesOf(projects);
+
+  // Un onglet de catégorie disparaît quand plus aucune liste n'en fait partie.
+  if (currentTab.startsWith("cat:") && !categories.includes(categoryOfTab())) {
+    currentTab = "tasks";
+    history.replaceState(null, "", "#tasks");
+  }
+
+  renderTabs(categories);
+  applyTab();
+  categoriesEl.replaceChildren(...categories.map((c) => h("option", { value: c })));
+
   if (currentTab === "dashboard") {
     renderDashboard(projects);
     return;
   }
 
-  projectsEl.replaceChildren(...projects.map(renderProject));
-  emptyEl.hidden = projects.length > 0;
+  const shown = currentTab === "tasks" ? projects : projects.filter((p) => p.category === categoryOfTab());
+  projectsEl.replaceChildren(...shown.map(renderProject));
+  emptyEl.hidden = shown.length > 0;
 
   if (addingTaskIn !== null) {
     const input = projectsEl.querySelector(`.project[data-id="${addingTaskIn}"] .add-task input[type="text"]`);
@@ -119,40 +219,19 @@ function render(projects) {
   }
 }
 
-/* ---------- Onglets ---------- */
-
-function applyTab() {
-  const dash = currentTab === "dashboard";
-  document.querySelectorAll(".tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === currentTab)));
-  projectsEl.hidden = dash;
-  dashboardEl.hidden = !dash;
-  newProjectSlot.hidden = dash;
-  if (dash) emptyEl.hidden = true;
-}
-
-function setTab(tab) {
-  if (tab === currentTab) return;
-  currentTab = tab;
-  history.replaceState(null, "", "#" + tab);
-  applyTab();
-  load();
-}
-
-document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
-
 /* ---------- Dashboard ---------- */
 
 // Cartes et projets repliés dans le dashboard : simple préférence d'affichage,
 // conservée dans le navigateur.
 const DASH_KEY = "todolist.dashClosed";
 const dashClosed = (() => {
-  try { return new Set(JSON.parse(localStorage.getItem(DASH_KEY) || "[]")); } catch { return new Set(); }
+  try { return new Set(JSON.parse(getPref(DASH_KEY) || "[]")); } catch { return new Set(); }
 })();
 
 function toggleDashClosed(key) {
   if (dashClosed.has(key)) dashClosed.delete(key);
   else dashClosed.add(key);
-  try { localStorage.setItem(DASH_KEY, JSON.stringify([...dashClosed])); } catch {}
+  setPref(DASH_KEY, JSON.stringify([...dashClosed]));
   renderDashboard(lastProjects);
 }
 
@@ -189,9 +268,6 @@ function renderDashSection(def, projects) {
     }
   }
 
-  // Ici : renommer, cocher et changer une date existante, mais ni ajout, ni retrait de date, ni suppression.
-  const opts = { dateMode: def.dateMode, allowClear: false, allowAddDate: false, deletable: false };
-
   const cardKey = `card:${def.id}`;
   const cardClosed = dashClosed.has(cardKey);
 
@@ -225,6 +301,9 @@ function renderDashSection(def, projects) {
         : groups.map((g) => {
             const groupKey = `group:${def.id}:${g.project.id}`;
             const groupClosed = dashClosed.has(groupKey);
+            // Ici : renommer, cocher, changer une date existante et ouvrir la tâche,
+            // mais ni ajout, ni retrait de date, ni suppression.
+            const opts = { project: g.project, dateMode: def.dateMode, allowClear: false, allowAddDate: false, deletable: false };
             return h(
               "div",
               { class: "dash-group" },
@@ -240,7 +319,7 @@ function renderDashSection(def, projects) {
                     onclick: () => toggleDashClosed(groupKey),
                   },
                   h("span", { class: "chev", "aria-hidden": "true" }, "›"),
-                  g.project.color ? h("span", { class: "dot", "data-color": g.project.color }) : null,
+                  g.project.color ? h("span", { class: "dot", ...colorProps(g.project.color) }) : null,
                   g.project.name,
                   groupClosed ? h("span", { class: "group-count" }, String(g.tasks.length)) : null
                 )
@@ -253,16 +332,17 @@ function renderDashSection(def, projects) {
   return h("section", { class: "dash-card" + (def.late ? " late" : "") + (cardClosed ? " closed" : "") }, header, body);
 }
 
+/* ---------- Projets ---------- */
+
 function renderProject(project) {
   const active = project.tasks.filter((t) => !t.done);
   const done = project.tasks.filter((t) => t.done);
 
   const card = h("section", {
-    class: "project" + (project.own_row ? " own-row" : "") + (project.collapsed ? " collapsed" : ""),
+    class: "project" + (project.collapsed ? " collapsed" : ""),
     "data-id": project.id,
-    "data-color": project.color || null,
+    ...colorProps(project.color),
   });
-  card.style.setProperty("--w", (project.width || 380) + "px");
 
   // Poignée : le glisser-déposer n'est activé que depuis elle,
   // pour ne pas gêner la sélection de texte dans les champs.
@@ -286,6 +366,10 @@ function renderProject(project) {
   const name = h("h2", { class: "project-name", title: "Cliquer pour renommer" }, project.name);
   name.addEventListener("click", () => editProjectName(name, project));
 
+  const chip = project.category
+    ? h("button", { class: "cat-chip", title: "Ouvrir l’onglet de cette catégorie", onclick: () => setTab("cat:" + project.category) }, project.category)
+    : null;
+
   card.append(
     h(
       "div",
@@ -293,6 +377,7 @@ function renderProject(project) {
       grip,
       chevron,
       name,
+      chip,
       project.collapsed && active.length ? h("span", { class: "count", title: "Tâches à faire" }, String(active.length)) : null,
       h("span", { class: "head-spacer" }),
       renderMenu(name, project)
@@ -301,9 +386,8 @@ function renderProject(project) {
 
   if (!project.collapsed) {
     // Attention : append(null) écrirait littéralement "null" ; on écarte les blocs absents.
-    card.append(...[renderTaskList(active), renderDone(project, done), renderAddTask(project)].filter(Boolean));
+    card.append(...[renderTaskList(project, active), renderDone(project, done), renderAddTask(project)].filter(Boolean));
   }
-  card.append(renderResizeHandle(card, project));
 
   card.addEventListener("dragstart", (e) => {
     if (e.target !== card) return; // ignore les glissements venant des tâches
@@ -319,8 +403,8 @@ function renderProject(project) {
 
 /* ---------- Tâches ---------- */
 
-function renderTaskList(active) {
-  const ul = h("ul", { class: "tasks" }, active.map((t) => renderTask(t, { reorderable: true })));
+function renderTaskList(project, active) {
+  const ul = h("ul", { class: "tasks" }, active.map((t) => renderTask(t, { project, reorderable: true })));
 
   ul.addEventListener("dragover", (e) => {
     if (!draggedTask || draggedTask.parentElement !== ul) return; // réordonnancement dans le même projet
@@ -345,7 +429,7 @@ function renderDone(project, done) {
     "details",
     { class: "done-group" },
     h("summary", {}, h("span", { class: "chev", "aria-hidden": "true" }, "›"), `Terminées (${done.length})`),
-    h("ul", { class: "tasks done-list" }, done.map((t) => renderTask(t)))
+    h("ul", { class: "tasks done-list" }, done.map((t) => renderTask(t, { project })))
   );
   details.open = openDone.has(project.id);
   details.addEventListener("toggle", () => {
@@ -356,8 +440,8 @@ function renderDone(project, done) {
 }
 
 function renderTask(task, opts = {}) {
-  const { reorderable = false, spacer = true, dateMode = "full", allowClear = true, allowAddDate = true, deletable = true } = opts;
-  const li = h("li", { class: "task" + (task.done ? " is-done" : ""), "data-id": task.id });
+  const { project, reorderable = false, spacer = true, dateMode = "full", allowClear = true, allowAddDate = true, deletable = true } = opts;
+  const li = h("li", { class: "task" + (task.done ? " is-done" : "") + (isToday(task) ? " due-today" : ""), "data-id": task.id });
 
   if (reorderable) {
     const grip = h("span", { class: "grip", title: "Glisser pour réordonner", "aria-hidden": "true" }, "⋮");
@@ -405,6 +489,21 @@ function renderTask(task, opts = {}) {
     const date = h("button", { class: "task-date empty-date" }, "ajouter une date");
     date.addEventListener("click", () => editTaskDate(date, task, { allowClear }));
     li.append(date);
+  }
+
+  if (project) {
+    const hasNotes = !!(task.description || (task.blocks && task.blocks.some(Boolean)));
+    li.append(
+      h(
+        "button",
+        {
+          class: "task-open" + (hasNotes ? " has-notes" : ""),
+          title: hasNotes ? "Ouvrir la tâche (elle contient une description)" : "Ouvrir la tâche",
+          onclick: () => openTask(task, project),
+        },
+        "ouvrir"
+      )
+    );
   }
 
   if (deletable) {
@@ -576,7 +675,149 @@ function renderAddTask(project) {
   return wrap;
 }
 
-/* ---------- Projets : menu, renommage, largeur ---------- */
+/* ---------- Carte de détail d'une tâche ---------- */
+
+let flushCurrent = null; // enregistre immédiatement les modifications en attente de la carte ouverte
+
+function autoGrow(ta) {
+  ta.style.height = "auto";
+  if (ta.scrollHeight) ta.style.height = ta.scrollHeight + 2 + "px";
+}
+
+function openTask(task, project) {
+  dialogEl.replaceChildren(renderTaskCard(task, project));
+  if (!dialogEl.open) dialogEl.showModal();
+  dialogEl.querySelectorAll("textarea").forEach(autoGrow);
+}
+
+dialogEl.addEventListener("close", () => {
+  if (flushCurrent) {
+    flushCurrent();
+    flushCurrent = null;
+  }
+  render(lastProjects); // met à jour l'indicateur « description » dans les listes
+});
+
+// Fermeture en cliquant à côté de la carte (sans fermer si une sélection de texte déborde).
+let downOnBackdrop = false;
+dialogEl.addEventListener("mousedown", (e) => (downOnBackdrop = e.target === dialogEl));
+dialogEl.addEventListener("click", (e) => {
+  if (downOnBackdrop && e.target === dialogEl) dialogEl.close();
+});
+
+function renderTaskCard(task, project) {
+  const state = { description: task.description || "", blocks: [...(task.blocks || [])] };
+  let timer = null;
+
+  const save = async () => {
+    timer = null;
+    try {
+      await api("PATCH", `/api/tasks/${task.id}`, { description: state.description, blocks: state.blocks });
+    } catch {}
+  };
+  const schedule = () => {
+    // On met à jour tout de suite l'objet en mémoire, l'enregistrement suit après une courte pause.
+    task.description = state.description;
+    task.blocks = [...state.blocks];
+    clearTimeout(timer);
+    timer = setTimeout(save, 600);
+  };
+  flushCurrent = () => {
+    if (timer !== null) {
+      clearTimeout(timer);
+      return save();
+    }
+  };
+
+  // Rappel des informations en haut de la carte (lecture seule).
+  const info = (label, value, cls) => h("div", { class: "td-item" }, h("dt", {}, label), h("dd", { class: cls || null }, value));
+  const late = isLate(task);
+  const status = task.done ? "Terminée" : late ? "En retard" : "À faire";
+
+  const header = h(
+    "header",
+    { class: "td-head" },
+    h(
+      "div",
+      { class: "td-top" },
+      h("h2", { id: "td-title", class: "td-title" + (task.done ? " is-done" : "") }, task.title),
+      h("button", { class: "td-close", type: "button", title: "Fermer", "aria-label": "Fermer", onclick: () => dialogEl.close() }, "✕")
+    ),
+    h(
+      "dl",
+      { class: "td-info" },
+      info("Date de fin", task.due_at ? formatDue(task.due_at) : "Aucune", late ? "late" : null),
+      info("Liste", project.name),
+      info("Catégorie", project.category || "Aucune"),
+      info("État", status, late ? "late" : null)
+    )
+  );
+
+  // Description principale + blocs supplémentaires.
+  const body = h("div", { class: "td-body" });
+
+  function block(label, value, onInput, onDelete) {
+    const ta = h("textarea", { class: "td-text", rows: "3", placeholder: "Écrire ici…", "aria-label": label, value });
+    ta.addEventListener("input", () => {
+      onInput(ta.value);
+      autoGrow(ta);
+      schedule();
+    });
+    return h(
+      "section",
+      { class: "td-block" },
+      h(
+        "div",
+        { class: "td-block-head" },
+        h("span", { class: "td-label" }, label),
+        onDelete ? h("button", { class: "td-del", type: "button", title: "Supprimer ce bloc", "aria-label": "Supprimer ce bloc", onclick: onDelete }, "✕") : null
+      ),
+      ta
+    );
+  }
+
+  function renderBlocks(focusLast = false) {
+    body.replaceChildren(
+      block("Description", state.description, (v) => (state.description = v), null),
+      ...state.blocks.map((text, i) =>
+        block(
+          `Bloc ${i + 2}`,
+          text,
+          (v) => (state.blocks[i] = v),
+          () => {
+            state.blocks.splice(i, 1);
+            schedule();
+            renderBlocks();
+          }
+        )
+      ),
+      h(
+        "button",
+        {
+          class: "add-task-link td-add",
+          type: "button",
+          onclick: () => {
+            state.blocks.push("");
+            schedule();
+            renderBlocks(true);
+          },
+        },
+        h("span", { class: "plus", "aria-hidden": "true" }),
+        "ajouter un bloc"
+      )
+    );
+    body.querySelectorAll("textarea").forEach(autoGrow);
+    if (focusLast) {
+      const all = body.querySelectorAll("textarea");
+      all[all.length - 1].focus();
+    }
+  }
+  renderBlocks();
+
+  return h("div", { class: "td-card" }, header, body);
+}
+
+/* ---------- Projets : menu, renommage, catégorie, couleur ---------- */
 
 let openMenuEl = null;
 document.addEventListener("click", (e) => {
@@ -602,11 +843,46 @@ function renderMenu(nameEl, project) {
   const wrap = h("div", { class: "menu-wrap" });
   const btn = h("button", { class: "menu-btn", "aria-label": "Options du projet", "aria-haspopup": "true", "aria-expanded": "false" }, "⋯");
 
+  const patch = async (fields) => {
+    closeMenu();
+    try { await api("PATCH", `/api/projects/${project.id}`, fields); } catch {}
+    load();
+  };
+
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     const wasOpen = openMenuEl === wrap;
     closeMenu();
     if (wasOpen) return;
+
+    // Catégorie : saisie libre, avec suggestion des catégories existantes.
+    const catInput = h("input", {
+      class: "menu-input",
+      type: "text",
+      list: "categories",
+      placeholder: "Aucune",
+      maxlength: "60",
+      value: project.category || "",
+      "aria-label": "Catégorie",
+    });
+    const saveCategory = () => patch({ category: catInput.value.trim() });
+    catInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        saveCategory();
+      }
+    });
+
+    // Couleur : palette ou couleur libre.
+    const current = project.color || "";
+    const custom = h("input", {
+      class: "swatch-color" + (HEX.test(current) ? " selected" : ""),
+      type: "color",
+      value: HEX.test(current) ? current : "#2b6fe6",
+      title: "Couleur personnalisée",
+      "aria-label": "Couleur personnalisée",
+    });
+    custom.addEventListener("change", () => patch({ color: custom.value }));
 
     const menu = h(
       "div",
@@ -622,35 +898,27 @@ function renderMenu(nameEl, project) {
         "Renommer"
       ),
       h(
-        "button",
-        {
-          onclick: async () => {
-            closeMenu();
-            try { await api("PATCH", `/api/projects/${project.id}`, { own_row: !project.own_row }); } catch {}
-            load();
-          },
-        },
-        (project.own_row ? "✓ " : "") + "Sur sa propre ligne"
+        "div",
+        { class: "menu-field" },
+        h("div", { class: "menu-label" }, "Catégorie"),
+        h("div", { class: "menu-row" }, catInput, h("button", { type: "button", onclick: saveCategory }, "OK"))
       ),
       h(
         "div",
         { class: "swatches", role: "group", "aria-label": "Couleur du projet" },
-        h("div", { class: "menu-label" }, "Couleur"),
+        h("div", { class: "menu-label" }, "Couleur de fond"),
         [["", "Aucune"], ...COLORS].map(([key, label]) => {
-          const selected = key === (project.color || "");
+          const selected = key === current;
           return h("button", {
             class: "swatch" + (key ? "" : " none") + (selected ? " selected" : ""),
             style: key ? `--sw: var(--c-${key})` : null,
             title: label,
             "aria-label": label,
             "aria-pressed": String(selected),
-            onclick: async () => {
-              closeMenu();
-              try { await api("PATCH", `/api/projects/${project.id}`, { color: key }); } catch {}
-              load();
-            },
+            onclick: () => patch({ color: key }),
           });
-        })
+        }),
+        custom
       ),
       h(
         "button",
@@ -703,43 +971,6 @@ function editProjectName(nameEl, project) {
   input.addEventListener("blur", () => finish(true));
 }
 
-// Poignée sur le bord droit : glisser pour élargir ou réduire le projet.
-function renderResizeHandle(card, project) {
-  const handle = h("div", {
-    class: "resize-handle",
-    title: "Glisser pour changer la largeur",
-    role: "separator",
-    "aria-orientation": "vertical",
-  });
-
-  handle.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    handle.setPointerCapture(e.pointerId);
-
-    const startX = e.clientX;
-    const startW = card.getBoundingClientRect().width;
-    const maxW = projectsEl.clientWidth;
-    let w = startW;
-
-    const move = (ev) => {
-      w = Math.max(MIN_WIDTH, Math.min(maxW, startW + ev.clientX - startX));
-      card.style.setProperty("--w", w + "px");
-    };
-    const up = async () => {
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", up);
-      handle.removeEventListener("pointercancel", up);
-      if (Math.round(w) === Math.round(startW)) return;
-      try { await api("PATCH", `/api/projects/${project.id}`, { width: Math.round(w) }); } catch {}
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", up);
-    handle.addEventListener("pointercancel", up);
-  });
-
-  return handle;
-}
-
 /* ---------- Nouveau projet ---------- */
 
 function showAddProjectButton() {
@@ -764,7 +995,8 @@ function showAddProjectForm() {
     if (!name) return;
     let project;
     try {
-      project = await api("POST", "/api/projects", { name });
+      // Dans l'onglet d'une catégorie, le nouveau projet rejoint cette catégorie.
+      project = await api("POST", "/api/projects", { name, category: categoryOfTab() });
     } catch {
       return;
     }
@@ -792,13 +1024,18 @@ projectsEl.addEventListener("dragover", (e) => {
 
   const over = e.target.closest(".project");
   if (!over) {
-    if (e.target === projectsEl) projectsEl.append(draggedProject); // zone vide : à la fin
+    // Zone vide : on ne place à la fin que si le pointeur est sous le dernier projet
+    // (sinon, passer au-dessus de l'espace entre deux colonnes déplacerait le projet).
+    if (e.target === projectsEl) {
+      const cards = projectsEl.querySelectorAll(":scope > .project");
+      const last = cards[cards.length - 1];
+      if (!last || e.clientY > last.getBoundingClientRect().bottom) projectsEl.append(draggedProject);
+    }
     return;
   }
   if (over === draggedProject) return;
 
-  // Les projets ont des largeurs différentes : sur la même ligne on compare
-  // à l'horizontale, sinon à la verticale.
+  // Sur la même ligne on compare à l'horizontale, sinon à la verticale.
   const r = over.getBoundingClientRect();
   const d = draggedProject.getBoundingClientRect();
   const sameRow = d.top < r.bottom && d.bottom > r.top;
@@ -820,6 +1057,8 @@ async function onProjectDragEnd() {
   card.classList.remove("dragging");
   card.draggable = false;
 
+  // Dans l'onglet d'une catégorie, seuls les projets affichés sont envoyés :
+  // le serveur les replace dans leurs emplacements sans bousculer les autres.
   const ids = [...projectsEl.querySelectorAll(":scope > .project")].map((el) => Number(el.dataset.id));
   try {
     await api("PUT", "/api/projects/order", { ids });
@@ -847,6 +1086,7 @@ async function onTaskDragEnd() {
 
 /* ---------- Démarrage ---------- */
 
+renderTabs([]);
 applyTab();
 showAddProjectButton();
 load();

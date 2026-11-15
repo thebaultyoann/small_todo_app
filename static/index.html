@@ -8,11 +8,14 @@
 </head>
 <body>
   <header class="topbar">
-    <nav class="tabs" role="tablist" aria-label="Vues">
-      <button class="tab" role="tab" data-tab="tasks" aria-selected="true">Tâches</button>
-      <button class="tab" role="tab" data-tab="dashboard" aria-selected="false">Dashboard</button>
-    </nav>
-    <div id="new-project-slot"></div>
+    <nav id="tabs" class="tabs" role="tablist" aria-label="Vues"></nav>
+    <div class="top-actions">
+      <label class="switch" title="Écrit en bleu, sur tous les onglets, les tâches à faire aujourd’hui">
+        <input type="checkbox" id="hl-today">
+        <span>Aujourd’hui en bleu</span>
+      </label>
+      <div id="new-project-slot"></div>
+    </div>
   </header>
 
   <main>
@@ -21,6 +24,8 @@
     <div id="dashboard" class="dashboard" role="tabpanel" hidden></div>
   </main>
 
+  <datalist id="categories"></datalist>
+  <dialog id="task-dialog" class="task-dialog" aria-labelledby="td-title"></dialog>
   <div id="toast" class="toast" role="status" hidden></div>
   <script src="/app.js"></script>
 </body>
