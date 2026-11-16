@@ -22,7 +22,7 @@ import (
 )
 
 // Dossier contenant static/ et todolist.json (modifiable avec l'option -dir).
-const defaultDir = `C:\Develop\go\todolist_v9\`
+const defaultDir = `C:\Logiciels\Todo`
 
 const (
 	defaultTime    = "18:00" // heure appliquée quand une date est donnée sans heure
